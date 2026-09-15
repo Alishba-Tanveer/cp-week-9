@@ -1,547 +1,322 @@
-# CMIT Internship — Week 9
+# Week 9 — Assignment 1: Auth with Refresh Rotation
 
-## Authentication, Authorization & API Security
+## Overview
 
-This repository contains my **Week 9 work** for the **CMIT Full-Stack Internship Program**, delivered by Coding Pixel.
+This assignment implements a real authentication flow using NestJS, PostgreSQL, TypeORM, Argon2, JWT access tokens, and database-backed refresh tokens.
 
-Week 9 focuses on securing the NestJS REST API developed during the previous backend weeks. The week covers authentication, authorization, role-based access control, token security, refresh-token rotation, API hardening, validation, rate limiting, security headers, and automated security testing.
-
----
-
-## Week 9 Objectives
-
-The main objectives of Week 9 are:
-
-* Secure user passwords using Argon2 hashing
-* Implement user registration and login
-* Implement short-lived JWT access tokens
-* Implement long-lived refresh tokens
-* Store refresh tokens securely as hashes
-* Rotate refresh tokens after every successful refresh
-* Revoke refresh tokens during logout
-* Protect API write operations with authentication
-* Implement project-based role-based access control
-* Enforce `owner`, `admin`, `member`, and `viewer` permissions
-* Prevent users from accessing resources belonging to other projects
-* Add API rate limiting
-* Add secure HTTP headers using Helmet
-* Configure restrictive CORS
-* Implement consistent global error responses
-* Enforce strict request validation
-* Validate route parameters
-* Document security controls using an OWASP checklist
-* Add unit and end-to-end security tests
-
----
+The implementation focuses on secure password storage, short-lived access tokens, refresh-token rotation, token revocation, refresh-token reuse detection, and configurable password-hashing costs.
 
 ## Tech Stack
 
-* **NestJS**
-* **TypeScript**
-* **PostgreSQL**
-* **TypeORM**
-* **JWT**
-* **Passport / Passport JWT**
-* **Argon2**
-* **Jest**
-* **Helmet**
-* **NestJS Throttler**
-* **Git & GitHub**
+* NestJS
+* TypeScript
+* PostgreSQL
+* TypeORM
+* JWT
+* Argon2id
+* Jest
+* Supertest
+* Joi
+* Node.js
 
 ---
 
-# Week 9 Assignments
+## Assignment Requirements
 
-Week 9 is divided into three graded assignments.
+### Warm-up
 
-| Assignment   | Focus                                      |
-| ------------ | ------------------------------------------ |
-| Assignment 1 | Authentication with Refresh Token Rotation |
-| Assignment 2 | Role-Based Access Control and Guards       |
-| Assignment 3 | Security Hardening and OWASP Checklist     |
+* Add `password_hash` to the `users` table.
+* Add a `refresh_tokens` table.
+* Keep TypeORM `synchronize` disabled.
+* Store only refresh-token hashes in the database.
+* Hash user passwords with Argon2id.
+* Never return passwords or password hashes in API responses.
 
-Each assignment is developed and submitted through its own Git branch and pull request.
+### Core
+
+* `POST /auth/register`
+* `POST /auth/login`
+* `POST /auth/refresh`
+* `POST /auth/logout`
+* Password verification with consistent `401` responses.
+* Short-lived JWT access tokens.
+* Long-lived refresh tokens.
+* Refresh-token rotation.
+* Refresh-token revocation.
+* Transactional refresh rotation.
+* Unit and end-to-end tests.
+
+### Optional Challenges
+
+* **X1:** Refresh-token family reuse detection.
+* **X2:** Expired refresh-token rejection.
+* **X3:** Configurable Argon2 cost parameters.
 
 ---
 
-# Assignment 1 — Auth with Refresh Rotation
+## Authentication Flow
 
-Assignment 1 introduces authentication to the existing Task Management API.
+### 1. Registration
 
-### Database Changes
+The client sends:
 
-A migration adds:
-
-### `users.password_hash`
-
-The existing `users` table receives a `password_hash` column.
-
-Passwords are never stored as plaintext.
-
-### `refresh_tokens`
-
-A new table stores refresh-token information:
-
-```text
-refresh_tokens
-├── id
-├── user_id
-├── token_hash
-├── expires_at
-├── revoked_at
-└── created_at
-```
-
-Only the hash of the refresh token is stored in the database.
-
-### Authentication Endpoints
-
-The following endpoints are implemented:
-
-```text
+```http
 POST /auth/register
+```
+
+with a name, email, and password.
+
+The password is hashed using Argon2id before being stored.
+
+The API response contains only safe user fields:
+
+```json
+{
+  "id": 1,
+  "name": "Example User",
+  "email": "example@example.com"
+}
+```
+
+The password and password hash are never returned.
+
+---
+
+### 2. Login
+
+The client sends:
+
+```http
 POST /auth/login
-POST /auth/refresh
-POST /auth/logout
 ```
 
-### Registration
+with valid credentials.
 
-Passwords are hashed with Argon2 before being stored.
+On success, the server returns:
 
-The API response does not expose:
+* a short-lived access JWT
+* a long-lived refresh token
 
-```text
-password
-password_hash
-```
-
-### Login
-
-Successful authentication returns:
-
-* Short-lived access JWT
-* Refresh token
-
-The JWT contains only the required identity information, such as:
+The access JWT contains only:
 
 ```json
 {
   "sub": 1,
-  "email": "user@example.com"
+  "email": "example@example.com"
 }
 ```
 
-JWT secrets and expiry values are provided through environment configuration.
+The refresh token itself is never stored in the database.
 
-### Refresh Token Rotation
+Instead, a SHA-256 hash of the refresh token is stored in `refresh_tokens`.
 
-Every successful refresh:
+Invalid credentials return:
 
-1. Validates the presented refresh token
-2. Checks expiration
-3. Checks revocation status
-4. Revokes the existing refresh token
-5. Creates a new refresh token
-6. Creates a new access token
-7. Returns the new token pair
-
-A previously rotated refresh token cannot be reused.
-
-### Logout
-
-Logout revokes the refresh token presented by the caller instead of deleting its database record.
-
-### Testing
-
-Assignment 1 includes:
-
-* Auth service unit tests
-* Password verification tests
-* Wrong-password tests
-* Refresh-token rotation tests
-* Login E2E tests
-* Refresh E2E tests
-* Reuse of revoked refresh token tests
-
----
-
-# Assignment 2 — RBAC and Guards
-
-Assignment 2 adds authorization to the authenticated API.
-
-Authentication answers:
-
-> **Who are you?**
-
-Authorization answers:
-
-> **Are you allowed to perform this action?**
-
-The API distinguishes between:
-
-```text
+```http
 401 Unauthorized
-403 Forbidden
 ```
+
+with the same authentication message for both an unknown email and an incorrect password.
 
 ---
 
-## Authentication Guard
+## Refresh Token Rotation
 
-Protected write routes use a JWT authentication guard based on Passport JWT.
+The client sends:
 
-The guard reads:
-
-```text
-Authorization: Bearer <token>
-```
-
-and attaches the authenticated user to the request.
-
----
-
-## Current User Decorator
-
-A custom:
-
-```text
-@CurrentUser()
-```
-
-parameter decorator retrieves the authenticated user from the request.
-
-The authenticated user's identity comes from the verified JWT rather than from a client-controlled `userId`.
-
----
-
-## Project Roles
-
-Authorization is based on the existing `project_members` table.
-
-The supported roles are:
-
-| Role     | Permissions                               |
-| -------- | ----------------------------------------- |
-| `owner`  | Full project access                       |
-| `admin`  | Manage project content and delete project |
-| `member` | Create and modify tasks/comments          |
-| `viewer` | Read-only access                          |
-
-Roles are **project-specific**.
-
-For example:
-
-```text
-User → Owner → Project A
-User → Viewer → Project B
-```
-
-Being an owner of Project A does not grant permissions on Project B.
-
----
-
-## Roles Decorator and Guard
-
-A custom:
-
-```text
-@Roles()
-```
-
-decorator is used with a `RolesGuard`.
-
-The guard reads the user's membership from:
-
-```text
-project_members
-```
-
-and verifies the role for the specific project involved in the request.
-
----
-
-## Destructive Operations
-
-Deleting a project is restricted to:
-
-```text
-owner
-admin
-```
-
-A:
-
-```text
-member
-viewer
-```
-
-receives:
-
-```text
-403 Forbidden
-```
-
----
-
-## RBAC Testing
-
-The authorization tests prove both:
-
-* Allowed requests
-* Denied requests
-
-The E2E tests verify that users with different project roles receive the correct response.
-
----
-
-# Assignment 3 — Security Hardening
-
-Assignment 3 hardens the API against common security risks.
-
----
-
-## Rate Limiting
-
-Authentication endpoints are protected with NestJS Throttler.
-
-The following endpoints receive rate limiting:
-
-```text
-POST /auth/register
-POST /auth/login
+```http
 POST /auth/refresh
 ```
 
-Repeated requests beyond the configured limit return:
+with the current refresh token.
+
+The server:
+
+1. Hashes the presented token.
+2. Finds the matching database row.
+3. Checks that the token has not been revoked.
+4. Checks that the token has not expired.
+5. Revokes the existing refresh-token row.
+6. Creates a new refresh token.
+7. Stores the new token hash.
+8. Returns a new access/refresh token pair.
+
+The rotation happens inside a database transaction.
+
+The old refresh token cannot be used again.
+
+---
+
+## Refresh Token Reuse Detection — X1
+
+Each refresh-token session has a `family_id`.
+
+The same family ID is carried through every rotation.
+
+If an already-revoked refresh token is presented again, the entire token family is revoked.
+
+This prevents a previously stolen refresh token from continuing to be used after reuse is detected.
+
+Example:
 
 ```text
-429 Too Many Requests
+Login
+  ↓
+Refresh Token A
+  ↓
+Refresh
+  ↓
+Token A = revoked
+Token B = active
+  ↓
+Token A reused
+  ↓
+401 Unauthorized
+  ↓
+Entire family revoked
 ```
 
 ---
 
-## Helmet
+## Expired Refresh Tokens — X2
 
-Helmet is enabled to provide security-related HTTP headers.
+Refresh tokens are checked against their database `expires_at` value.
 
----
+An expired refresh token is rejected with:
 
-## CORS
-
-CORS is restricted to the configured frontend origin.
-
-The development frontend origin is:
-
-```text
-http://localhost:3000
+```http
+401 Unauthorized
 ```
 
-The allowed origin is read from environment configuration rather than being hardcoded into the application.
+No new token pair is issued and the expired token is not rotated.
 
 ---
 
-## Global Exception Filter
+## Configurable Argon2 Cost — X3
 
-A global exception filter provides a consistent error response.
+Argon2id cost parameters are loaded from configuration rather than being hardcoded.
 
-The standard response contains:
+Production/default configuration:
 
-```json
-{
-  "statusCode": 400,
-  "message": "Validation failed",
-  "error": "Bad Request",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "path": "/tasks"
-}
+```env
+ARGON2_MEMORY_COST=65536
+ARGON2_TIME_COST=3
+ARGON2_PARALLELISM=4
 ```
 
-Unexpected internal errors do not expose:
+The test environment uses lower values so the test suite remains fast while the production configuration remains stronger.
 
-* Stack traces
-* Database details
-* Internal implementation details
-* Secrets
+Test configuration:
+
+```text
+memoryCost: 16384
+timeCost: 1
+parallelism: 1
+```
+
+The generated password hash is tested to ensure the configured parameters are actually being used.
 
 ---
 
-## Strict Validation
+## Database Design
 
-Global validation is configured to prevent unwanted fields from reaching the application.
+### `users`
 
-Unexpected request properties such as:
+The authentication migration adds:
 
 ```text
-role
-isAdmin
 password_hash
 ```
 
-cannot be used for mass assignment.
+The existing users table is preserved for compatibility with the previous project phases.
 
-DTOs explicitly define the fields accepted from clients.
+### `refresh_tokens`
+
+The table contains:
+
+| Column       | Purpose                       |
+| ------------ | ----------------------------- |
+| `id`         | Primary key                   |
+| `user_id`    | Related user                  |
+| `family_id`  | Refresh-token family          |
+| `token_hash` | SHA-256 hash of refresh token |
+| `expires_at` | Refresh-token expiry          |
+| `revoked_at` | Revocation timestamp          |
+| `created_at` | Creation timestamp            |
+
+A foreign key connects:
+
+```text
+refresh_tokens.user_id
+        ↓
+users.id
+```
+
+Refresh-token rows are revoked instead of deleted so the security history remains available.
 
 ---
 
-## Route Parameter Validation
+## Security Configuration
 
-Route IDs are validated before reaching the database.
+Authentication configuration is loaded from environment variables.
 
-For example:
+Example:
 
-```text
-GET /tasks/abc
+```env
+JWT_SECRET=replace_with_a_random_secret_at_least_32_characters
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+
+ARGON2_MEMORY_COST=65536
+ARGON2_TIME_COST=3
+ARGON2_PARALLELISM=4
 ```
 
-returns:
+Secrets are kept in `.env` and excluded from Git.
 
-```text
-400 Bad Request
-```
+`.env.example` contains placeholder values only.
 
-instead of allowing an invalid ID to reach the database layer.
+TypeORM synchronization remains disabled:
 
----
-
-# OWASP Security Checklist
-
-Assignment 3 also documents the application's security posture in:
-
-```text
-OWASP.md
-```
-
-The checklist maps OWASP Top 10 categories to concrete controls implemented in the project or explains why a category is not applicable.
-
-Examples include:
-
-* Broken Access Control → JWT guards and project-based `RolesGuard`
-* Cryptographic Failures → Argon2 password hashing and hashed refresh tokens
-* Injection → DTO validation and TypeORM
-* Identification and Authentication Failures → JWT authentication and refresh-token rotation
-* Security Misconfiguration → Helmet, restrictive CORS, environment configuration
-* Vulnerable Components → dependency management and security review
-* Logging and Monitoring → controlled error handling
-
----
-
-# Security Principles Applied
-
-The implementation follows several important security principles:
-
-### Passwords are never stored directly
-
-```text
-Plain Password
-      ↓
-    Argon2
-      ↓
-Password Hash
-      ↓
-Database
-```
-
-### Refresh tokens are stored as hashes
-
-```text
-Raw Refresh Token
-      ↓
-      Hash
-      ↓
-Database
-```
-
-### Access tokens are short-lived
-
-Access tokens are intended for frequent API requests and expire relatively quickly.
-
-### Refresh tokens are rotated
-
-Every successful refresh invalidates the previous refresh token.
-
-### Authentication happens before authorization
-
-The security flow is:
-
-```text
-Request
-   ↓
-JWT Authentication
-   ↓
-Authenticated User
-   ↓
-Project Role Lookup
-   ↓
-Authorization
-   ↓
-Controller
-```
-
-### Authorization is project-specific
-
-A user's role on one project does not automatically grant access to another project.
-
----
-
-# Testing
-
-The project uses Jest for automated testing.
-
-Testing covers:
-
-* Authentication
-* Password verification
-* JWT authentication
-* Refresh-token rotation
-* Refresh-token revocation
-* Logout
-* Role-based authorization
-* Forbidden access
-* Cross-project access restrictions
-* Rate limiting
-* Error response format
-* Validation
-
----
-
-# Database
-
-PostgreSQL is used as the primary database with TypeORM as the data-access layer.
-
-Database schema changes are handled through migrations.
-
-TypeORM schema synchronization remains disabled:
-
-```text
+```ts
 synchronize: false
 ```
 
-No production schema changes are made through automatic synchronization.
+Database changes are managed through migrations.
 
 ---
 
-# Week 9 Learning Outcomes
+## Testing
 
-By completing Week 9, the project demonstrates practical understanding of:
+### Unit Tests
 
-* Authentication vs authorization
-* Password hashing
-* JWT authentication
-* Access and refresh tokens
+The authentication service tests cover:
+
+* Configured Argon2 password hashing
+* Correct password verification
+* Incorrect password rejection
 * Refresh-token rotation
-* Token revocation
-* Session security
-* Project-based RBAC
-* NestJS guards
-* Custom decorators
-* API security
-* Rate limiting
-* CORS
-* Security headers
-* Exception handling
-* Strict validation
-* OWASP security principles
-* Security-focused unit testing
-* Security-focused E2E testing
+* Expired refresh-token rejection
+
+Current result:
+
+```text
+Test Suites: 1 passed
+Tests: 5 passed
+```
+
+### End-to-End Tests
+
+The E2E suite covers:
+
+* Successful login
+* Incorrect password rejection
+* Refresh-token rotation
+* Refresh-token family reuse detection
+
+Current result:
+
+```text
+Test Suites: 1 passed
+Tests: 4 passed
+```
