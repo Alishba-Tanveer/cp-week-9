@@ -21,6 +21,9 @@ export class RefreshToken {
   @JoinColumn({ name: 'user_id' })
   user!: User;
 
+  @Column({ name: 'family_id', type: 'uuid', nullable: false })
+  familyId!: string;
+
   @Column({ name: 'token_hash', type: 'varchar', nullable: false })
   tokenHash!: string;
 

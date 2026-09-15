@@ -1,114 +1,322 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Week 9 — Assignment 1: Auth with Refresh Rotation
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## Overview
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+This assignment implements a real authentication flow using NestJS, PostgreSQL, TypeORM, Argon2, JWT access tokens, and database-backed refresh tokens.
 
-## Description
+The implementation focuses on secure password storage, short-lived access tokens, refresh-token rotation, token revocation, refresh-token reuse detection, and configurable password-hashing costs.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Tech Stack
 
-## Project setup
+* NestJS
+* TypeScript
+* PostgreSQL
+* TypeORM
+* JWT
+* Argon2id
+* Jest
+* Supertest
+* Joi
+* Node.js
 
-```bash
-$ npm install
+---
+
+## Assignment Requirements
+
+### Warm-up
+
+* Add `password_hash` to the `users` table.
+* Add a `refresh_tokens` table.
+* Keep TypeORM `synchronize` disabled.
+* Store only refresh-token hashes in the database.
+* Hash user passwords with Argon2id.
+* Never return passwords or password hashes in API responses.
+
+### Core
+
+* `POST /auth/register`
+* `POST /auth/login`
+* `POST /auth/refresh`
+* `POST /auth/logout`
+* Password verification with consistent `401` responses.
+* Short-lived JWT access tokens.
+* Long-lived refresh tokens.
+* Refresh-token rotation.
+* Refresh-token revocation.
+* Transactional refresh rotation.
+* Unit and end-to-end tests.
+
+### Optional Challenges
+
+* **X1:** Refresh-token family reuse detection.
+* **X2:** Expired refresh-token rejection.
+* **X3:** Configurable Argon2 cost parameters.
+
+---
+
+## Authentication Flow
+
+### 1. Registration
+
+The client sends:
+
+```http
+POST /auth/register
 ```
 
-## Compile and run the project
+with a name, email, and password.
 
-```bash
-# development
-$ npm run start
+The password is hashed using Argon2id before being stored.
 
-# watch mode
-$ npm run start:dev
+The API response contains only safe user fields:
 
-# production mode
-$ npm run start:prod
+```json
+{
+  "id": 1,
+  "name": "Example User",
+  "email": "example@example.com"
+}
 ```
 
-## Run tests
+The password and password hash are never returned.
 
-```bash
-# unit tests
-$ npm run test
+---
 
-# e2e tests
-$ npm run test:e2e
+### 2. Login
 
-# test coverage
-$ npm run test:cov
+The client sends:
+
+```http
+POST /auth/login
 ```
 
-## Deployment
+with valid credentials.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+On success, the server returns:
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+* a short-lived access JWT
+* a long-lived refresh token
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+The access JWT contains only:
+
+```json
+{
+  "sub": 1,
+  "email": "example@example.com"
+}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+The refresh token itself is never stored in the database.
 
-## Observability
+Instead, a SHA-256 hash of the refresh token is stored in `refresh_tokens`.
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+Invalid credentials return:
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+```http
+401 Unauthorized
+```
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+with the same authentication message for both an unknown email and an incorrect password.
 
-## Resources
+---
 
-Check out a few resources that may come in handy when working with NestJS:
+## Refresh Token Rotation
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+The client sends:
 
-## Support
+```http
+POST /auth/refresh
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+with the current refresh token.
 
-## Stay in touch
+The server:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+1. Hashes the presented token.
+2. Finds the matching database row.
+3. Checks that the token has not been revoked.
+4. Checks that the token has not expired.
+5. Revokes the existing refresh-token row.
+6. Creates a new refresh token.
+7. Stores the new token hash.
+8. Returns a new access/refresh token pair.
 
-## License
+The rotation happens inside a database transaction.
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+The old refresh token cannot be used again.
+
+---
+
+## Refresh Token Reuse Detection — X1
+
+Each refresh-token session has a `family_id`.
+
+The same family ID is carried through every rotation.
+
+If an already-revoked refresh token is presented again, the entire token family is revoked.
+
+This prevents a previously stolen refresh token from continuing to be used after reuse is detected.
+
+Example:
+
+```text
+Login
+  ↓
+Refresh Token A
+  ↓
+Refresh
+  ↓
+Token A = revoked
+Token B = active
+  ↓
+Token A reused
+  ↓
+401 Unauthorized
+  ↓
+Entire family revoked
+```
+
+---
+
+## Expired Refresh Tokens — X2
+
+Refresh tokens are checked against their database `expires_at` value.
+
+An expired refresh token is rejected with:
+
+```http
+401 Unauthorized
+```
+
+No new token pair is issued and the expired token is not rotated.
+
+---
+
+## Configurable Argon2 Cost — X3
+
+Argon2id cost parameters are loaded from configuration rather than being hardcoded.
+
+Production/default configuration:
+
+```env
+ARGON2_MEMORY_COST=65536
+ARGON2_TIME_COST=3
+ARGON2_PARALLELISM=4
+```
+
+The test environment uses lower values so the test suite remains fast while the production configuration remains stronger.
+
+Test configuration:
+
+```text
+memoryCost: 16384
+timeCost: 1
+parallelism: 1
+```
+
+The generated password hash is tested to ensure the configured parameters are actually being used.
+
+---
+
+## Database Design
+
+### `users`
+
+The authentication migration adds:
+
+```text
+password_hash
+```
+
+The existing users table is preserved for compatibility with the previous project phases.
+
+### `refresh_tokens`
+
+The table contains:
+
+| Column       | Purpose                       |
+| ------------ | ----------------------------- |
+| `id`         | Primary key                   |
+| `user_id`    | Related user                  |
+| `family_id`  | Refresh-token family          |
+| `token_hash` | SHA-256 hash of refresh token |
+| `expires_at` | Refresh-token expiry          |
+| `revoked_at` | Revocation timestamp          |
+| `created_at` | Creation timestamp            |
+
+A foreign key connects:
+
+```text
+refresh_tokens.user_id
+        ↓
+users.id
+```
+
+Refresh-token rows are revoked instead of deleted so the security history remains available.
+
+---
+
+## Security Configuration
+
+Authentication configuration is loaded from environment variables.
+
+Example:
+
+```env
+JWT_SECRET=replace_with_a_random_secret_at_least_32_characters
+JWT_ACCESS_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+
+ARGON2_MEMORY_COST=65536
+ARGON2_TIME_COST=3
+ARGON2_PARALLELISM=4
+```
+
+Secrets are kept in `.env` and excluded from Git.
+
+`.env.example` contains placeholder values only.
+
+TypeORM synchronization remains disabled:
+
+```ts
+synchronize: false
+```
+
+Database changes are managed through migrations.
+
+---
+
+## Testing
+
+### Unit Tests
+
+The authentication service tests cover:
+
+* Configured Argon2 password hashing
+* Correct password verification
+* Incorrect password rejection
+* Refresh-token rotation
+* Expired refresh-token rejection
+
+Current result:
+
+```text
+Test Suites: 1 passed
+Tests: 5 passed
+```
+
+### End-to-End Tests
+
+The E2E suite covers:
+
+* Successful login
+* Incorrect password rejection
+* Refresh-token rotation
+* Refresh-token family reuse detection
+
+Current result:
+
+```text
+Test Suites: 1 passed
+Tests: 4 passed
+```
