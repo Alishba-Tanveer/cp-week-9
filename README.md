@@ -1,288 +1,286 @@
-# Week 9 — Assignment 1: Auth with Refresh Rotation
+# Week 9 — Assignment 2: RBAC & Authorization
 
 ## Overview
 
-This assignment implements a real authentication flow using NestJS, PostgreSQL, TypeORM, Argon2, JWT access tokens, and database-backed refresh tokens.
+Assignment 2 extends the Week 9 authentication system with role-based access control, authorization guards, authenticated-user handling, resource ownership checks, cross-project isolation, and role caching.
 
-The implementation focuses on secure password storage, short-lived access tokens, refresh-token rotation, token revocation, refresh-token reuse detection, and configurable password-hashing costs.
+The implementation uses the existing `project_members` table to determine a user's role within each project.
 
-## Tech Stack
+### Supported Roles
 
-* NestJS
-* TypeScript
-* PostgreSQL
-* TypeORM
-* JWT
-* Argon2id
-* Jest
-* Supertest
-* Joi
-* Node.js
+* `owner`
+* `admin`
+* `member`
+* `viewer`
 
 ---
 
-## Assignment Requirements
+## Features Implemented
 
-### Warm-up
+### 1. JWT Authentication Guard
 
-* Add `password_hash` to the `users` table.
-* Add a `refresh_tokens` table.
-* Keep TypeORM `synchronize` disabled.
-* Store only refresh-token hashes in the database.
-* Hash user passwords with Argon2id.
-* Never return passwords or password hashes in API responses.
-
-### Core
-
-* `POST /auth/register`
-* `POST /auth/login`
-* `POST /auth/refresh`
-* `POST /auth/logout`
-* Password verification with consistent `401` responses.
-* Short-lived JWT access tokens.
-* Long-lived refresh tokens.
-* Refresh-token rotation.
-* Refresh-token revocation.
-* Transactional refresh rotation.
-* Unit and end-to-end tests.
-
-### Optional Challenges
-
-* **X1:** Refresh-token family reuse detection.
-* **X2:** Expired refresh-token rejection.
-* **X3:** Configurable Argon2 cost parameters.
-
----
-
-## Authentication Flow
-
-### 1. Registration
-
-The client sends:
+All protected routes require a valid JWT access token using:
 
 ```http
-POST /auth/register
+Authorization: Bearer <access_token>
 ```
 
-with a name, email, and password.
+The application uses `JwtAuthGuard` with Passport JWT.
 
-The password is hashed using Argon2id before being stored.
-
-The API response contains only safe user fields:
-
-```json
-{
-  "id": 1,
-  "name": "Example User",
-  "email": "example@example.com"
-}
-```
-
-The password and password hash are never returned.
-
----
-
-### 2. Login
-
-The client sends:
-
-```http
-POST /auth/login
-```
-
-with valid credentials.
-
-On success, the server returns:
-
-* a short-lived access JWT
-* a long-lived refresh token
-
-The access JWT contains only:
-
-```json
-{
-  "sub": 1,
-  "email": "example@example.com"
-}
-```
-
-The refresh token itself is never stored in the database.
-
-Instead, a SHA-256 hash of the refresh token is stored in `refresh_tokens`.
-
-Invalid credentials return:
+Unauthenticated requests to protected routes return:
 
 ```http
 401 Unauthorized
 ```
 
-with the same authentication message for both an unknown email and an incorrect password.
+The JWT guard runs before role authorization so unauthenticated requests are rejected before `RolesGuard`.
 
 ---
 
-## Refresh Token Rotation
+### 2. Current User Decorator
 
-The client sends:
+Added:
+
+```ts
+@CurrentUser()
+```
+
+The decorator retrieves the authenticated user from the validated JWT payload.
+
+Authenticated identity is trusted over user-controlled request body fields.
+
+For example, when creating a project:
+
+```json
+{
+  "name": "Example Project",
+  "ownerId": 999
+}
+```
+
+the application uses the `sub` value from the access token as the actual owner.
+
+The same approach is used for comment authorship and task creation.
+
+---
+
+### 3. Role-Based Access Control
+
+Added:
+
+```ts
+@Roles(...)
+```
+
+and:
+
+```ts
+RolesGuard
+```
+
+The guard looks up the authenticated user's membership in `project_members` and checks the user's role against the roles required by the route.
+
+Example:
+
+```ts
+@Roles(
+  ProjectMemberRole.OWNER,
+  ProjectMemberRole.ADMIN,
+)
+```
+
+Authorization is evaluated using the project associated with the request.
+
+---
+
+## Authorization Rules
+
+### Projects
+
+| Operation           | Owner   | Admin   | Member  | Viewer  |
+| ------------------- | ------- | ------- | ------- | ------- |
+| View public project | Allowed | Allowed | Allowed | Allowed |
+| Update project      | Allowed | Allowed | Denied  | Denied  |
+| Delete project      | Allowed | Allowed | Denied  | Denied  |
+
+Only project owners and admins can update or delete a project.
+
+---
+
+### Tasks
+
+Task creation is allowed for:
+
+* Owner
+* Admin
+* Member
+
+Viewers receive:
 
 ```http
+403 Forbidden
+```
+
+for task creation.
+
+For task updates/deletes, the optional resource ownership rule is also implemented:
+
+* Owner → allowed
+* Admin → allowed
+* Task creator → allowed
+* Task assignee → allowed
+* Unrelated member → denied
+* Viewer → denied
+
+---
+
+### Comments
+
+Authenticated project members with the required role can create comments.
+
+Comment authorship is taken from the authenticated JWT user rather than a user-supplied `authorId`.
+
+---
+
+## Cross-Project Isolation
+
+Project membership is evaluated per project.
+
+Having a role in Project A does not grant access to Project B.
+
+For example:
+
+```text
+User → Member of Project A
+```
+
+does not automatically provide permission to modify:
+
+```text
+Project B
+```
+
+Cross-project task and comment access is rejected with:
+
+```http
+403 Forbidden
+```
+
+This prevents users from using permissions from one project to access resources belonging to another project.
+
+---
+
+## Public Routes
+
+JWT authentication is applied globally through `JwtAuthGuard`.
+
+Routes that should remain public are explicitly marked with:
+
+```ts
+@Public()
+```
+
+### Authentication routes
+
+The following routes are public:
+
+```text
+POST /auth/register
+POST /auth/login
 POST /auth/refresh
 ```
 
-with the current refresh token.
+Logout remains protected because it operates on an authenticated user's refresh token.
 
-The server:
+### Documented public GET routes
 
-1. Hashes the presented token.
-2. Finds the matching database row.
-3. Checks that the token has not been revoked.
-4. Checks that the token has not expired.
-5. Revokes the existing refresh-token row.
-6. Creates a new refresh token.
-7. Stores the new token hash.
-8. Returns a new access/refresh token pair.
+The read-only GET routes for projects, tasks, and comments are explicitly marked public.
 
-The rotation happens inside a database transaction.
-
-The old refresh token cannot be used again.
+Write operations remain protected.
 
 ---
 
-## Refresh Token Reuse Detection — X1
+## Role Cache
 
-Each refresh-token session has a `family_id`.
+Assignment 2 also includes role lookup caching.
 
-The same family ID is carried through every rotation.
+`RoleCacheService` stores project membership roles temporarily to avoid querying `project_members` on every authorization check.
 
-If an already-revoked refresh token is presented again, the entire token family is revoked.
-
-This prevents a previously stolen refresh token from continuing to be used after reuse is detected.
-
-Example:
+### Cache configuration
 
 ```text
-Login
-  ↓
-Refresh Token A
-  ↓
-Refresh
-  ↓
-Token A = revoked
-Token B = active
-  ↓
-Token A reused
-  ↓
-401 Unauthorized
-  ↓
-Entire family revoked
+TTL: 30 seconds
 ```
+
+The cache key is based on:
+
+```text
+userId:projectId
+```
+
+Repeated authorization requests for the same user/project can therefore reuse the cached role.
+
+### Cache Invalidation
+
+The cache is cleared when a `ProjectMember` is:
+
+* Inserted
+* Updated
+* Removed
+
+This allows membership role changes to take effect without restarting the application.
+
+The cache is process-local. In a multi-instance deployment, an instance that does not receive the invalidation event can have a worst-case stale-role window of up to 30 seconds.
 
 ---
 
-## Expired Refresh Tokens — X2
+## Task Creator Tracking
 
-Refresh tokens are checked against their database `expires_at` value.
+A `creator_id` column was added to the `tasks` table to support resource ownership checks.
 
-An expired refresh token is rejected with:
-
-```http
-401 Unauthorized
-```
-
-No new token pair is issued and the expired token is not rotated.
-
----
-
-## Configurable Argon2 Cost — X3
-
-Argon2id cost parameters are loaded from configuration rather than being hardcoded.
-
-Production/default configuration:
-
-```env
-ARGON2_MEMORY_COST=65536
-ARGON2_TIME_COST=3
-ARGON2_PARALLELISM=4
-```
-
-The test environment uses lower values so the test suite remains fast while the production configuration remains stronger.
-
-Test configuration:
+Migration:
 
 ```text
-memoryCost: 16384
-timeCost: 1
-parallelism: 1
+1789481000000-AddTaskCreator
 ```
 
-The generated password hash is tested to ensure the configured parameters are actually being used.
-
----
-
-## Database Design
-
-### `users`
-
-The authentication migration adds:
+The column references:
 
 ```text
-password_hash
-```
-
-The existing users table is preserved for compatibility with the previous project phases.
-
-### `refresh_tokens`
-
-The table contains:
-
-| Column       | Purpose                       |
-| ------------ | ----------------------------- |
-| `id`         | Primary key                   |
-| `user_id`    | Related user                  |
-| `family_id`  | Refresh-token family          |
-| `token_hash` | SHA-256 hash of refresh token |
-| `expires_at` | Refresh-token expiry          |
-| `revoked_at` | Revocation timestamp          |
-| `created_at` | Creation timestamp            |
-
-A foreign key connects:
-
-```text
-refresh_tokens.user_id
-        ↓
 users.id
 ```
 
-Refresh-token rows are revoked instead of deleted so the security history remains available.
+with:
+
+```text
+ON DELETE SET NULL
+```
+
+An index was also added for efficient creator lookups.
 
 ---
 
-## Security Configuration
+## Database Configuration
 
-Authentication configuration is loaded from environment variables.
-
-Example:
-
-```env
-JWT_SECRET=replace_with_a_random_secret_at_least_32_characters
-JWT_ACCESS_EXPIRES_IN=15m
-JWT_REFRESH_EXPIRES_IN=7d
-
-ARGON2_MEMORY_COST=65536
-ARGON2_TIME_COST=3
-ARGON2_PARALLELISM=4
-```
-
-Secrets are kept in `.env` and excluded from Git.
-
-`.env.example` contains placeholder values only.
-
-TypeORM synchronization remains disabled:
+TypeORM continues to use:
 
 ```ts
 synchronize: false
 ```
 
-Database changes are managed through migrations.
+Database schema changes are handled through migrations.
+
+The standalone TypeORM data source includes all domain entities required for migration execution:
+
+```text
+User
+RefreshToken
+Project
+ProjectMember
+Task
+Tag
+Comment
+```
 
 ---
 
@@ -290,33 +288,34 @@ Database changes are managed through migrations.
 
 ### Unit Tests
 
-The authentication service tests cover:
-
-* Configured Argon2 password hashing
-* Correct password verification
-* Incorrect password rejection
-* Refresh-token rotation
-* Expired refresh-token rejection
-
-Current result:
-
 ```text
-Test Suites: 1 passed
-Tests: 5 passed
+4 test suites
+21 tests passed
 ```
 
-### End-to-End Tests
+### E2E Tests
+
+```text
+1 test suite
+34 tests passed
+```
 
 The E2E suite covers:
 
-* Successful login
-* Incorrect password rejection
-* Refresh-token rotation
-* Refresh-token family reuse detection
-
-Current result:
-
-```text
-Test Suites: 1 passed
-Tests: 4 passed
-```
+* JWT authentication
+* Public routes
+* Protected write routes
+* `@CurrentUser()`
+* Spoofed `ownerId` protection
+* Spoofed `authorId` protection
+* Viewer restrictions
+* Owner permissions
+* Admin permissions
+* Project deletion authorization
+* Task ownership
+* Task assignee permissions
+* Cross-project isolation
+* Guard ordering
+* Runtime membership changes
+* Role caching
+* Cache invalidation

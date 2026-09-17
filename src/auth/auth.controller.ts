@@ -6,6 +6,7 @@ import {
   Post,
 } from '@nestjs/common';
 
+import { Public } from './decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { LogoutDto } from './dto/logout.dto';
@@ -17,17 +18,20 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @Public()
   register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
   }
 
   @Post('login')
+  @Public()
   @HttpCode(HttpStatus.OK)
   login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
 
   @Post('refresh')
+  @Public()
   @HttpCode(HttpStatus.OK)
   refresh(@Body() refreshDto: RefreshDto) {
     return this.authService.refresh(refreshDto);

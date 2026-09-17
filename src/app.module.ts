@@ -1,11 +1,23 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AuthModule } from './auth/auth.module';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { CommentsModule } from './comments/comments.module';
 import { envValidationSchema } from './config/env.validation';
+import { ProjectMemberSubscriber } from './database/subscribers/project-member.subscriber';
+import { Comment } from './entities/Comment';
+import { Project } from './entities/Project';
+import { ProjectMember } from './entities/ProjectMember';
 import { RefreshToken } from './entities/RefreshToken';
+import { Tag } from './entities/Tag';
+import { Task } from './entities/Task';
 import { User } from './entities/User';
+import { ProjectsModule } from './projects/projects.module';
+import { TasksModule } from './tasks/tasks.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -24,12 +36,32 @@ import { User } from './entities/User';
         username: configService.get<string>('DB_USER'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_NAME'),
-        entities: [User, RefreshToken],
+        entities: [
+          User,
+          RefreshToken,
+          Project,
+          ProjectMember,
+          Task,
+          Tag,
+          Comment,
+        ],
+        subscribers: [ProjectMemberSubscriber],
         synchronize: false,
       }),
     }),
 
     AuthModule,
+    UsersModule,
+    ProjectsModule,
+    TasksModule,
+    CommentsModule,
+  ],
+
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
   ],
 })
 export class AppModule {}
