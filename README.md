@@ -1,312 +1,188 @@
-# CMIT Internship — Week 9
+# Week 9 — Assignment 2: RBAC & Authorization
 
-## Authentication, Authorization & API Security
+## Overview
 
-This repository contains my **Week 9 work** for the **CMIT Full-Stack Internship Program**, delivered by Coding Pixel.
+Assignment 2 extends the Week 9 authentication system with role-based access control, authorization guards, authenticated-user handling, resource ownership checks, cross-project isolation, and role caching.
 
-Week 9 focuses on securing the NestJS REST API developed during the previous backend weeks. The week covers authentication, authorization, role-based access control, token security, refresh-token rotation, API hardening, validation, rate limiting, security headers, and automated security testing.
+The implementation uses the existing `project_members` table to determine a user's role within each project.
 
----
+### Supported Roles
 
-## Week 9 Objectives
-
-The main objectives of Week 9 are:
-
-* Secure user passwords using Argon2 hashing
-* Implement user registration and login
-* Implement short-lived JWT access tokens
-* Implement long-lived refresh tokens
-* Store refresh tokens securely as hashes
-* Rotate refresh tokens after every successful refresh
-* Revoke refresh tokens during logout
-* Protect API write operations with authentication
-* Implement project-based role-based access control
-* Enforce `owner`, `admin`, `member`, and `viewer` permissions
-* Prevent users from accessing resources belonging to other projects
-* Add API rate limiting
-* Add secure HTTP headers using Helmet
-* Configure restrictive CORS
-* Implement consistent global error responses
-* Enforce strict request validation
-* Validate route parameters
-* Document security controls using an OWASP checklist
-* Add unit and end-to-end security tests
+* `owner`
+* `admin`
+* `member`
+* `viewer`
 
 ---
 
-## Tech Stack
+## Features Implemented
 
-* **NestJS**
-* **TypeScript**
-* **PostgreSQL**
-* **TypeORM**
-* **JWT**
-* **Passport / Passport JWT**
-* **Argon2**
-* **Jest**
-* **Helmet**
-* **NestJS Throttler**
-* **Git & GitHub**
+### 1. JWT Authentication Guard
 
----
+All protected routes require a valid JWT access token using:
 
-# Week 9 Assignments
-
-Week 9 is divided into three graded assignments.
-
-| Assignment   | Focus                                      |
-| ------------ | ------------------------------------------ |
-| Assignment 1 | Authentication with Refresh Token Rotation |
-| Assignment 2 | Role-Based Access Control and Guards       |
-| Assignment 3 | Security Hardening and OWASP Checklist     |
-
-Each assignment is developed and submitted through its own Git branch and pull request.
-
----
-
-# Assignment 1 — Auth with Refresh Rotation
-
-Assignment 1 introduces authentication to the existing Task Management API.
-
-### Database Changes
-
-A migration adds:
-
-### `users.password_hash`
-
-The existing `users` table receives a `password_hash` column.
-
-Passwords are never stored as plaintext.
-
-### `refresh_tokens`
-
-A new table stores refresh-token information:
-
-```text
-refresh_tokens
-├── id
-├── user_id
-├── token_hash
-├── expires_at
-├── revoked_at
-└── created_at
+```http
+Authorization: Bearer <access_token>
 ```
 
-Only the hash of the refresh token is stored in the database.
+The application uses `JwtAuthGuard` with Passport JWT.
 
-### Authentication Endpoints
+Unauthenticated requests to protected routes return:
 
-The following endpoints are implemented:
-
-```text
-POST /auth/register
-POST /auth/login
-POST /auth/refresh
-POST /auth/logout
-```
-
-### Registration
-
-Passwords are hashed with Argon2 before being stored.
-
-The API response does not expose:
-
-```text
-password
-password_hash
-```
-
-### Login
-
-Successful authentication returns:
-
-* Short-lived access JWT
-* Refresh token
-
-The JWT contains only the required identity information, such as:
-
-```json
-{
-  "sub": 1,
-  "email": "user@example.com"
-}
-```
-
-JWT secrets and expiry values are provided through environment configuration.
-
-### Refresh Token Rotation
-
-Every successful refresh:
-
-1. Validates the presented refresh token
-2. Checks expiration
-3. Checks revocation status
-4. Revokes the existing refresh token
-5. Creates a new refresh token
-6. Creates a new access token
-7. Returns the new token pair
-
-A previously rotated refresh token cannot be reused.
-
-### Logout
-
-Logout revokes the refresh token presented by the caller instead of deleting its database record.
-
-### Testing
-
-Assignment 1 includes:
-
-* Auth service unit tests
-* Password verification tests
-* Wrong-password tests
-* Refresh-token rotation tests
-* Login E2E tests
-* Refresh E2E tests
-* Reuse of revoked refresh token tests
-
----
-
-# Assignment 2 — RBAC and Guards
-
-Assignment 2 adds authorization to the authenticated API.
-
-Authentication answers:
-
-> **Who are you?**
-
-Authorization answers:
-
-> **Are you allowed to perform this action?**
-
-The API distinguishes between:
-
-```text
+```http
 401 Unauthorized
-403 Forbidden
 ```
+
+The JWT guard runs before role authorization so unauthenticated requests are rejected before `RolesGuard`.
 
 ---
 
-## Authentication Guard
+### 2. Current User Decorator
 
-Protected write routes use a JWT authentication guard based on Passport JWT.
+Added:
 
-The guard reads:
-
-```text
-Authorization: Bearer <token>
-```
-
-and attaches the authenticated user to the request.
-
----
-
-## Current User Decorator
-
-A custom:
-
-```text
+```ts
 @CurrentUser()
 ```
 
-parameter decorator retrieves the authenticated user from the request.
+The decorator retrieves the authenticated user from the validated JWT payload.
 
-The authenticated user's identity comes from the verified JWT rather than from a client-controlled `userId`.
+Authenticated identity is trusted over user-controlled request body fields.
+
+For example, when creating a project:
+
+```json
+{
+  "name": "Example Project",
+  "ownerId": 999
+}
+```
+
+the application uses the `sub` value from the access token as the actual owner.
+
+The same approach is used for comment authorship and task creation.
 
 ---
 
-## Project Roles
+### 3. Role-Based Access Control
 
-Authorization is based on the existing `project_members` table.
+Added:
 
-The supported roles are:
+```ts
+@Roles(...)
+```
 
-| Role     | Permissions                               |
-| -------- | ----------------------------------------- |
-| `owner`  | Full project access                       |
-| `admin`  | Manage project content and delete project |
-| `member` | Create and modify tasks/comments          |
-| `viewer` | Read-only access                          |
+and:
 
-Roles are **project-specific**.
+```ts
+RolesGuard
+```
+
+The guard looks up the authenticated user's membership in `project_members` and checks the user's role against the roles required by the route.
+
+Example:
+
+```ts
+@Roles(
+  ProjectMemberRole.OWNER,
+  ProjectMemberRole.ADMIN,
+)
+```
+
+Authorization is evaluated using the project associated with the request.
+
+---
+
+## Authorization Rules
+
+### Projects
+
+| Operation           | Owner   | Admin   | Member  | Viewer  |
+| ------------------- | ------- | ------- | ------- | ------- |
+| View public project | Allowed | Allowed | Allowed | Allowed |
+| Update project      | Allowed | Allowed | Denied  | Denied  |
+| Delete project      | Allowed | Allowed | Denied  | Denied  |
+
+Only project owners and admins can update or delete a project.
+
+---
+
+### Tasks
+
+Task creation is allowed for:
+
+* Owner
+* Admin
+* Member
+
+Viewers receive:
+
+```http
+403 Forbidden
+```
+
+for task creation.
+
+For task updates/deletes, the optional resource ownership rule is also implemented:
+
+* Owner → allowed
+* Admin → allowed
+* Task creator → allowed
+* Task assignee → allowed
+* Unrelated member → denied
+* Viewer → denied
+
+---
+
+### Comments
+
+Authenticated project members with the required role can create comments.
+
+Comment authorship is taken from the authenticated JWT user rather than a user-supplied `authorId`.
+
+---
+
+## Cross-Project Isolation
+
+Project membership is evaluated per project.
+
+Having a role in Project A does not grant access to Project B.
 
 For example:
 
 ```text
-User → Owner → Project A
-User → Viewer → Project B
+User → Member of Project A
 ```
 
-Being an owner of Project A does not grant permissions on Project B.
-
----
-
-## Roles Decorator and Guard
-
-A custom:
+does not automatically provide permission to modify:
 
 ```text
-@Roles()
+Project B
 ```
 
-decorator is used with a `RolesGuard`.
+Cross-project task and comment access is rejected with:
 
-The guard reads the user's membership from:
-
-```text
-project_members
-```
-
-and verifies the role for the specific project involved in the request.
-
----
-
-## Destructive Operations
-
-Deleting a project is restricted to:
-
-```text
-owner
-admin
-```
-
-A:
-
-```text
-member
-viewer
-```
-
-receives:
-
-```text
+```http
 403 Forbidden
 ```
 
----
-
-## RBAC Testing
-
-The authorization tests prove both:
-
-* Allowed requests
-* Denied requests
-
-The E2E tests verify that users with different project roles receive the correct response.
+This prevents users from using permissions from one project to access resources belonging to another project.
 
 ---
 
-# Assignment 3 — Security Hardening
+## Public Routes
 
-Assignment 3 hardens the API against common security risks.
+JWT authentication is applied globally through `JwtAuthGuard`.
 
----
+Routes that should remain public are explicitly marked with:
 
-## Rate Limiting
+```ts
+@Public()
+```
 
-Authentication endpoints are protected with NestJS Throttler.
+### Authentication routes
 
-The following endpoints receive rate limiting:
+The following routes are public:
 
 ```text
 POST /auth/register
@@ -314,234 +190,132 @@ POST /auth/login
 POST /auth/refresh
 ```
 
-Repeated requests beyond the configured limit return:
+Logout remains protected because it operates on an authenticated user's refresh token.
 
-```text
-429 Too Many Requests
-```
+### Documented public GET routes
 
----
+The read-only GET routes for projects, tasks, and comments are explicitly marked public.
 
-## Helmet
-
-Helmet is enabled to provide security-related HTTP headers.
+Write operations remain protected.
 
 ---
 
-## CORS
+## Role Cache
 
-CORS is restricted to the configured frontend origin.
+Assignment 2 also includes role lookup caching.
 
-The development frontend origin is:
+`RoleCacheService` stores project membership roles temporarily to avoid querying `project_members` on every authorization check.
+
+### Cache configuration
 
 ```text
-http://localhost:3000
+TTL: 30 seconds
 ```
 
-The allowed origin is read from environment configuration rather than being hardcoded into the application.
+The cache key is based on:
+
+```text
+userId:projectId
+```
+
+Repeated authorization requests for the same user/project can therefore reuse the cached role.
+
+### Cache Invalidation
+
+The cache is cleared when a `ProjectMember` is:
+
+* Inserted
+* Updated
+* Removed
+
+This allows membership role changes to take effect without restarting the application.
+
+The cache is process-local. In a multi-instance deployment, an instance that does not receive the invalidation event can have a worst-case stale-role window of up to 30 seconds.
 
 ---
 
-## Global Exception Filter
+## Task Creator Tracking
 
-A global exception filter provides a consistent error response.
+A `creator_id` column was added to the `tasks` table to support resource ownership checks.
 
-The standard response contains:
+Migration:
 
-```json
-{
-  "statusCode": 400,
-  "message": "Validation failed",
-  "error": "Bad Request",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "path": "/tasks"
-}
+```text
+1789481000000-AddTaskCreator
 ```
 
-Unexpected internal errors do not expose:
+The column references:
 
-* Stack traces
-* Database details
-* Internal implementation details
-* Secrets
+```text
+users.id
+```
+
+with:
+
+```text
+ON DELETE SET NULL
+```
+
+An index was also added for efficient creator lookups.
 
 ---
 
-## Strict Validation
+## Database Configuration
 
-Global validation is configured to prevent unwanted fields from reaching the application.
+TypeORM continues to use:
 
-Unexpected request properties such as:
-
-```text
-role
-isAdmin
-password_hash
-```
-
-cannot be used for mass assignment.
-
-DTOs explicitly define the fields accepted from clients.
-
----
-
-## Route Parameter Validation
-
-Route IDs are validated before reaching the database.
-
-For example:
-
-```text
-GET /tasks/abc
-```
-
-returns:
-
-```text
-400 Bad Request
-```
-
-instead of allowing an invalid ID to reach the database layer.
-
----
-
-# OWASP Security Checklist
-
-Assignment 3 also documents the application's security posture in:
-
-```text
-OWASP.md
-```
-
-The checklist maps OWASP Top 10 categories to concrete controls implemented in the project or explains why a category is not applicable.
-
-Examples include:
-
-* Broken Access Control → JWT guards and project-based `RolesGuard`
-* Cryptographic Failures → Argon2 password hashing and hashed refresh tokens
-* Injection → DTO validation and TypeORM
-* Identification and Authentication Failures → JWT authentication and refresh-token rotation
-* Security Misconfiguration → Helmet, restrictive CORS, environment configuration
-* Vulnerable Components → dependency management and security review
-* Logging and Monitoring → controlled error handling
-
----
-
-# Security Principles Applied
-
-The implementation follows several important security principles:
-
-### Passwords are never stored directly
-
-```text
-Plain Password
-      ↓
-    Argon2
-      ↓
-Password Hash
-      ↓
-Database
-```
-
-### Refresh tokens are stored as hashes
-
-```text
-Raw Refresh Token
-      ↓
-      Hash
-      ↓
-Database
-```
-
-### Access tokens are short-lived
-
-Access tokens are intended for frequent API requests and expire relatively quickly.
-
-### Refresh tokens are rotated
-
-Every successful refresh invalidates the previous refresh token.
-
-### Authentication happens before authorization
-
-The security flow is:
-
-```text
-Request
-   ↓
-JWT Authentication
-   ↓
-Authenticated User
-   ↓
-Project Role Lookup
-   ↓
-Authorization
-   ↓
-Controller
-```
-
-### Authorization is project-specific
-
-A user's role on one project does not automatically grant access to another project.
-
----
-
-# Testing
-
-The project uses Jest for automated testing.
-
-Testing covers:
-
-* Authentication
-* Password verification
-* JWT authentication
-* Refresh-token rotation
-* Refresh-token revocation
-* Logout
-* Role-based authorization
-* Forbidden access
-* Cross-project access restrictions
-* Rate limiting
-* Error response format
-* Validation
-
----
-
-# Database
-
-PostgreSQL is used as the primary database with TypeORM as the data-access layer.
-
-Database schema changes are handled through migrations.
-
-TypeORM schema synchronization remains disabled:
-
-```text
+```ts
 synchronize: false
 ```
 
-No production schema changes are made through automatic synchronization.
+Database schema changes are handled through migrations.
+
+The standalone TypeORM data source includes all domain entities required for migration execution:
+
+```text
+User
+RefreshToken
+Project
+ProjectMember
+Task
+Tag
+Comment
+```
 
 ---
 
-# Week 9 Learning Outcomes
+## Testing
 
-By completing Week 9, the project demonstrates practical understanding of:
+### Unit Tests
 
-* Authentication vs authorization
-* Password hashing
+```text
+4 test suites
+21 tests passed
+```
+
+### E2E Tests
+
+```text
+1 test suite
+34 tests passed
+```
+
+The E2E suite covers:
+
 * JWT authentication
-* Access and refresh tokens
-* Refresh-token rotation
-* Token revocation
-* Session security
-* Project-based RBAC
-* NestJS guards
-* Custom decorators
-* API security
-* Rate limiting
-* CORS
-* Security headers
-* Exception handling
-* Strict validation
-* OWASP security principles
-* Security-focused unit testing
-* Security-focused E2E testing
+* Public routes
+* Protected write routes
+* `@CurrentUser()`
+* Spoofed `ownerId` protection
+* Spoofed `authorId` protection
+* Viewer restrictions
+* Owner permissions
+* Admin permissions
+* Project deletion authorization
+* Task ownership
+* Task assignee permissions
+* Cross-project isolation
+* Guard ordering
+* Runtime membership changes
+* Role caching
+* Cache invalidation
