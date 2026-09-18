@@ -3,14 +3,15 @@
   "rootDir": "..",
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
+  "maxWorkers": 1,
+  "setupFiles": ["<rootDir>/test/setup-e2e.ts"],
   "transform": {
     "^.+\\.ts$": [
       "ts-jest",
       {
-        "useESM": true,
         "tsconfig": {
-          "module": "ESNext",
-          "moduleResolution": "Bundler",
+          "module": "commonjs",
+          "moduleResolution": "node",
           "target": "ES2023",
           "esModuleInterop": true,
           "experimentalDecorators": true,
@@ -22,9 +23,5 @@
         }
       }
     ]
-  },
-  "extensionsToTreatAsEsm": [".ts"],
-  "moduleNameMapper": {
-    "^(\\.{1,2}/.*)\\.js$": "$1"
   }
 }

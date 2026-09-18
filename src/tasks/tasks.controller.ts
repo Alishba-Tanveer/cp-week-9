@@ -6,7 +6,6 @@ import {
   HttpCode,
   Inject,
   Param,
-  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -19,6 +18,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { TaskOwnershipGuard } from '../auth/guards/task-ownership.guard';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { PositiveIntPipe } from '../common/pipes/positive-int.pipe';
 import { ProjectMemberRole } from '../entities/ProjectMember';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { TasksQueryDto } from './dto/tasks-query.dto';
@@ -54,7 +54,7 @@ export class TasksController {
 
   @Get(':id')
   @Public()
-  findById(@Param('id', ParseIntPipe) id: number) {
+  findById(@Param('id', PositiveIntPipe) id: number) {
     return this.tasksService.findById(id);
   }
 
@@ -65,7 +65,7 @@ export class TasksController {
     ProjectMemberRole.MEMBER,
   )
   update(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', PositiveIntPipe) id: number,
     @Body() updateTaskDto: UpdateTaskDto,
   ) {
     return this.tasksService.update(id, updateTaskDto);
@@ -78,7 +78,7 @@ export class TasksController {
     ProjectMemberRole.ADMIN,
     ProjectMemberRole.MEMBER,
   )
-  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
+  async remove(@Param('id', PositiveIntPipe) id: number): Promise<void> {
     await this.tasksService.remove(id);
   }
 }

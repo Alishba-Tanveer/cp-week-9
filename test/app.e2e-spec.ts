@@ -948,10 +948,8 @@ describe('RBAC API (e2e)', () => {
       })
       .expect(400);
 
-    expect(response.body.message).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('property projectId should not exist'),
-      ]),
+    expect(response.body.message).toContain(
+      'property projectId should not exist',
     );
   });
 

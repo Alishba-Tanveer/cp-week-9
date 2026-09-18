@@ -3,7 +3,6 @@ import {
   Controller,
   Get,
   Param,
-  ParseIntPipe,
   Post,
   Query,
   UseGuards,
@@ -14,6 +13,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { PositiveIntPipe } from '../common/pipes/positive-int.pipe';
 import { ProjectMemberRole } from '../entities/ProjectMember';
 import { CommentsQueryDto } from './dto/comments-query.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -31,7 +31,7 @@ export class CommentsController {
     ProjectMemberRole.MEMBER,
   )
   async create(
-    @Param('taskId', ParseIntPipe) taskId: number,
+    @Param('taskId', PositiveIntPipe) taskId: number,
     @Body() createCommentDto: CreateCommentDto,
     @CurrentUser() user: JwtPayload,
   ) {
@@ -44,7 +44,7 @@ export class CommentsController {
   @Get()
   @Public()
   async findByTask(
-    @Param('taskId', ParseIntPipe) taskId: number,
+    @Param('taskId', PositiveIntPipe) taskId: number,
     @Query() filters: CommentsQueryDto,
   ) {
     return this.commentsService.findByTask(taskId, filters);

@@ -6,7 +6,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -17,6 +16,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
+import { PositiveIntPipe } from '../common/pipes/positive-int.pipe';
 import { ProjectMemberRole } from '../entities/ProjectMember';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -46,14 +46,14 @@ export class ProjectsController {
 
   @Get(':id')
   @Public()
-  async findById(@Param('id', ParseIntPipe) id: number) {
+  async findById(@Param('id', PositiveIntPipe) id: number) {
     return this.projectsService.findById(id);
   }
 
   @Patch(':id')
   @Roles(ProjectMemberRole.OWNER, ProjectMemberRole.ADMIN)
   async update(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id', PositiveIntPipe) id: number,
     @Body() updateProjectDto: UpdateProjectDto,
   ) {
     return this.projectsService.update(id, updateProjectDto);
@@ -62,7 +62,7 @@ export class ProjectsController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(ProjectMemberRole.OWNER, ProjectMemberRole.ADMIN)
-  async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
+  async remove(@Param('id', PositiveIntPipe) id: number): Promise<void> {
     await this.projectsService.remove(id);
   }
 }

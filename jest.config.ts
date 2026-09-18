@@ -8,10 +8,9 @@ const config: Config = {
     '^.+\\.ts$': [
       'ts-jest',
       {
-        useESM: true,
         tsconfig: {
-          module: 'ESNext',
-          moduleResolution: 'Bundler',
+          module: 'commonjs',
+          moduleResolution: 'node',
           target: 'ES2023',
           esModuleInterop: true,
           experimentalDecorators: true,
@@ -23,10 +22,6 @@ const config: Config = {
         },
       },
     ],
-  },
-  extensionsToTreatAsEsm: ['.ts'],
-  moduleNameMapper: {
-    '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   collectCoverageFrom: [
     'src/**/*.(t|j)s',

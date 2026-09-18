@@ -10,6 +10,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
+import { RedactingLogger } from '../common/logging/redacting-logger';
 import { RefreshToken } from '../entities/RefreshToken';
 import { User } from '../entities/User';
 import { LogoutDto } from './dto/logout.dto';
@@ -20,6 +21,7 @@ import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new RedactingLogger(AuthService.name);
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -72,6 +74,11 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
+    this.logger.debug({
+      event: 'auth.login.attempt',
+      email: loginDto.email,
+      password: loginDto.password,
+    });
     const email = loginDto.email.trim().toLowerCase();
 
     const user = await this.userRepository.findOne({
