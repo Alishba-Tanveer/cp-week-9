@@ -1,312 +1,121 @@
-# CMIT Internship — Week 9
+# Week 9 — Assignment 3
 
-## Authentication, Authorization & API Security
+## Security Hardening and OWASP Top 10 Checklist
 
-This repository contains my **Week 9 work** for the **CMIT Full-Stack Internship Program**, delivered by Coding Pixel.
+This assignment focuses on hardening the NestJS REST API against common web security risks.
 
-Week 9 focuses on securing the NestJS REST API developed during the previous backend weeks. The week covers authentication, authorization, role-based access control, token security, refresh-token rotation, API hardening, validation, rate limiting, security headers, and automated security testing.
-
----
-
-## Week 9 Objectives
-
-The main objectives of Week 9 are:
-
-* Secure user passwords using Argon2 hashing
-* Implement user registration and login
-* Implement short-lived JWT access tokens
-* Implement long-lived refresh tokens
-* Store refresh tokens securely as hashes
-* Rotate refresh tokens after every successful refresh
-* Revoke refresh tokens during logout
-* Protect API write operations with authentication
-* Implement project-based role-based access control
-* Enforce `owner`, `admin`, `member`, and `viewer` permissions
-* Prevent users from accessing resources belonging to other projects
-* Add API rate limiting
-* Add secure HTTP headers using Helmet
-* Configure restrictive CORS
-* Implement consistent global error responses
-* Enforce strict request validation
-* Validate route parameters
-* Document security controls using an OWASP checklist
-* Add unit and end-to-end security tests
+The implementation adds rate limiting, security headers, restricted CORS, strict request validation, route parameter validation, centralized exception handling, and an OWASP Top 10 security checklist.
 
 ---
 
-## Tech Stack
+## Project Overview
 
-* **NestJS**
-* **TypeScript**
-* **PostgreSQL**
-* **TypeORM**
-* **JWT**
-* **Passport / Passport JWT**
-* **Argon2**
-* **Jest**
-* **Helmet**
-* **NestJS Throttler**
-* **Git & GitHub**
+This project is a NestJS REST API backed by PostgreSQL and TypeORM.
 
----
+The Week 9 work builds on the authentication and authorization implementation from the previous assignments and adds additional security controls at the application and API levels.
 
-# Week 9 Assignments
+### Technology Stack
 
-Week 9 is divided into three graded assignments.
-
-| Assignment   | Focus                                      |
-| ------------ | ------------------------------------------ |
-| Assignment 1 | Authentication with Refresh Token Rotation |
-| Assignment 2 | Role-Based Access Control and Guards       |
-| Assignment 3 | Security Hardening and OWASP Checklist     |
-
-Each assignment is developed and submitted through its own Git branch and pull request.
+* **Backend:** NestJS
+* **Language:** TypeScript
+* **Database:** PostgreSQL
+* **ORM:** TypeORM
+* **Authentication:** JWT
+* **Password Hashing:** Argon2
+* **Validation:** `class-validator` / NestJS `ValidationPipe`
+* **Rate Limiting:** `@nestjs/throttler`
+* **Security Headers:** Helmet
+* **Testing:** Jest + Supertest
+* **Package Manager:** npm
 
 ---
 
-# Assignment 1 — Auth with Refresh Rotation
+# Assignment 3 Objectives
 
-Assignment 1 introduces authentication to the existing Task Management API.
+The main objectives of Assignment 3 are:
 
-### Database Changes
+1. Add rate limiting to authentication routes.
+2. Configure global throttling.
+3. Add Helmet security headers.
+4. Restrict CORS to the configured frontend origin.
+5. Move security configuration into environment variables.
+6. Implement a consistent global exception response.
+7. Prevent internal server errors from leaking sensitive information.
+8. Enable strict DTO validation.
+9. Validate all route parameters as positive integers where IDs are expected.
+10. Document the OWASP Top 10 security controls.
+11. Add automated security-focused E2E tests.
+12. Verify the application through linting, building, unit tests, and E2E tests.
 
-A migration adds:
+---
 
-### `users.password_hash`
+# 1. Rate Limiting
 
-The existing `users` table receives a `password_hash` column.
+## Global Throttling
 
-Passwords are never stored as plaintext.
+The application uses `@nestjs/throttler` to provide global IP-based rate limiting.
 
-### `refresh_tokens`
-
-A new table stores refresh-token information:
+The global configuration is:
 
 ```text
-refresh_tokens
-├── id
-├── user_id
-├── token_hash
-├── expires_at
-├── revoked_at
-└── created_at
+Limit: 100 requests
+Time window: 60 seconds
+Tracking: IP address
 ```
 
-Only the hash of the refresh token is stored in the database.
-
-### Authentication Endpoints
-
-The following endpoints are implemented:
+Configuration is located at:
 
 ```text
-POST /auth/register
-POST /auth/login
-POST /auth/refresh
-POST /auth/logout
+src/config/throttler.config.ts
 ```
 
-### Registration
+### Global Configuration
 
-Passwords are hashed with Argon2 before being stored.
+```ts
+export const throttlerConfig: ThrottlerModuleOptions = {
+  throttlers: [
+    {
+      ttl: 60_000,
+      limit: 100,
+    },
+  ],
+};
+```
 
-The API response does not expose:
+The throttler is registered globally in:
 
 ```text
-password
-password_hash
+src/app.module.ts
 ```
 
-### Login
+using:
 
-Successful authentication returns:
+```ts
+ThrottlerModule.forRoot(throttlerConfig)
+```
 
-* Short-lived access JWT
-* Refresh token
+and:
 
-The JWT contains only the required identity information, such as:
-
-```json
+```ts
 {
-  "sub": 1,
-  "email": "user@example.com"
+  provide: APP_GUARD,
+  useClass: ThrottlerGuard,
 }
 ```
 
-JWT secrets and expiry values are provided through environment configuration.
-
-### Refresh Token Rotation
-
-Every successful refresh:
-
-1. Validates the presented refresh token
-2. Checks expiration
-3. Checks revocation status
-4. Revokes the existing refresh token
-5. Creates a new refresh token
-6. Creates a new access token
-7. Returns the new token pair
-
-A previously rotated refresh token cannot be reused.
-
-### Logout
-
-Logout revokes the refresh token presented by the caller instead of deleting its database record.
-
-### Testing
-
-Assignment 1 includes:
-
-* Auth service unit tests
-* Password verification tests
-* Wrong-password tests
-* Refresh-token rotation tests
-* Login E2E tests
-* Refresh E2E tests
-* Reuse of revoked refresh token tests
-
 ---
 
-# Assignment 2 — RBAC and Guards
+## Authentication Route Throttling
 
-Assignment 2 adds authorization to the authenticated API.
+Authentication endpoints use a stricter limit than the global API limit.
 
-Authentication answers:
-
-> **Who are you?**
-
-Authorization answers:
-
-> **Are you allowed to perform this action?**
-
-The API distinguishes between:
+The following routes are limited to:
 
 ```text
-401 Unauthorized
-403 Forbidden
+20 requests per 60 seconds
 ```
 
----
-
-## Authentication Guard
-
-Protected write routes use a JWT authentication guard based on Passport JWT.
-
-The guard reads:
-
-```text
-Authorization: Bearer <token>
-```
-
-and attaches the authenticated user to the request.
-
----
-
-## Current User Decorator
-
-A custom:
-
-```text
-@CurrentUser()
-```
-
-parameter decorator retrieves the authenticated user from the request.
-
-The authenticated user's identity comes from the verified JWT rather than from a client-controlled `userId`.
-
----
-
-## Project Roles
-
-Authorization is based on the existing `project_members` table.
-
-The supported roles are:
-
-| Role     | Permissions                               |
-| -------- | ----------------------------------------- |
-| `owner`  | Full project access                       |
-| `admin`  | Manage project content and delete project |
-| `member` | Create and modify tasks/comments          |
-| `viewer` | Read-only access                          |
-
-Roles are **project-specific**.
-
-For example:
-
-```text
-User → Owner → Project A
-User → Viewer → Project B
-```
-
-Being an owner of Project A does not grant permissions on Project B.
-
----
-
-## Roles Decorator and Guard
-
-A custom:
-
-```text
-@Roles()
-```
-
-decorator is used with a `RolesGuard`.
-
-The guard reads the user's membership from:
-
-```text
-project_members
-```
-
-and verifies the role for the specific project involved in the request.
-
----
-
-## Destructive Operations
-
-Deleting a project is restricted to:
-
-```text
-owner
-admin
-```
-
-A:
-
-```text
-member
-viewer
-```
-
-receives:
-
-```text
-403 Forbidden
-```
-
----
-
-## RBAC Testing
-
-The authorization tests prove both:
-
-* Allowed requests
-* Denied requests
-
-The E2E tests verify that users with different project roles receive the correct response.
-
----
-
-# Assignment 3 — Security Hardening
-
-Assignment 3 hardens the API against common security risks.
-
----
-
-## Rate Limiting
-
-Authentication endpoints are protected with NestJS Throttler.
-
-The following endpoints receive rate limiting:
+### Protected Authentication Routes
 
 ```text
 POST /auth/register
@@ -314,234 +123,673 @@ POST /auth/login
 POST /auth/refresh
 ```
 
-Repeated requests beyond the configured limit return:
+The stricter limits are configured with the `@Throttle()` decorator in:
 
 ```text
-429 Too Many Requests
+src/auth/auth.controller.ts
 ```
 
+### Example
+
+```ts
+@Throttle({
+  default: {
+    limit: 20,
+    ttl: 60_000,
+  },
+})
+```
+
+### Why IP-Based Throttling?
+
+IP-based throttling was selected because it is simple to apply consistently across authentication endpoints and does not require storing additional rate-limit state against user accounts.
+
+A limitation is that users behind the same public IP address, such as employees in an office or users behind a shared NAT, can share the same rate-limit bucket.
+
 ---
 
-## Helmet
+# 2. Helmet Security Headers
 
-Helmet is enabled to provide security-related HTTP headers.
+Helmet is enabled to add common HTTP security headers to API responses.
+
+Security configuration is centralized in:
+
+```text
+src/config/security.ts
+```
+
+Helmet is enabled with:
+
+```ts
+app.use(helmet());
+```
+
+The configuration is applied during application startup.
+
+### Security Headers
+
+The E2E security tests verify headers including:
+
+```text
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+Strict-Transport-Security
+```
+
+Helmet provides additional security-related response headers according to its configuration.
 
 ---
 
-## CORS
+# 3. CORS Configuration
 
-CORS is restricted to the configured frontend origin.
+Cross-Origin Resource Sharing is restricted to the configured frontend origin.
 
-The development frontend origin is:
+The origin is not hard-coded inside `main.ts`.
+
+Instead, it is loaded from:
+
+```text
+CORS_ORIGIN
+```
+
+in the environment configuration.
+
+### `.env`
+
+```text
+CORS_ORIGIN=http://localhost:3000
+```
+
+The application reads this value using NestJS `ConfigService`.
+
+The security configuration contains:
+
+```ts
+app.enableCors({
+  origin: configService.getOrThrow<string>('CORS_ORIGIN'),
+  credentials: true,
+});
+```
+
+### Allowed Origin
+
+The configured development frontend:
 
 ```text
 http://localhost:3000
 ```
 
-The allowed origin is read from environment configuration rather than being hardcoded into the application.
+is allowed.
+
+### Disallowed Origins
+
+An unconfigured origin such as:
+
+```text
+http://malicious.example
+```
+
+does not receive the configured CORS permission header.
+
+CORS behavior is covered by the security E2E tests.
 
 ---
 
-## Global Exception Filter
+# 4. Environment Validation
 
-A global exception filter provides a consistent error response.
+Security-sensitive configuration is validated when the application starts.
 
-The standard response contains:
+The validation schema is located at:
+
+```text
+src/config/env.validation.ts
+```
+
+The following configuration values are validated:
+
+```text
+DB_HOST
+DB_PORT
+DB_USER
+DB_PASSWORD
+DB_NAME
+
+JWT_SECRET
+JWT_ACCESS_EXPIRES_IN
+JWT_REFRESH_EXPIRES_IN
+
+ARGON2_MEMORY_COST
+ARGON2_TIME_COST
+ARGON2_PARALLELISM
+
+CORS_ORIGIN
+```
+
+The JWT secret is required to contain at least 32 characters.
+
+The CORS origin must also be a valid URI.
+
+This prevents the application from silently starting with invalid security configuration.
+
+---
+
+# 5. Strict Request Validation
+
+The application uses a global NestJS `ValidationPipe`.
+
+Configuration:
+
+```ts
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+  }),
+);
+```
+
+### `whitelist`
+
+Only properties defined by the DTO are accepted.
+
+### `forbidNonWhitelisted`
+
+Unexpected properties cause a `400 Bad Request` instead of being silently accepted.
+
+For example, a registration request containing:
 
 ```json
 {
-  "statusCode": 400,
-  "message": "Validation failed",
-  "error": "Bad Request",
-  "timestamp": "2026-01-01T00:00:00.000Z",
-  "path": "/tasks"
+  "name": "Test User",
+  "email": "test@example.com",
+  "password": "StrongPassword123!",
+  "role": "admin",
+  "isAdmin": true
 }
 ```
 
-Unexpected internal errors do not expose:
+is rejected because `role` and `isAdmin` are not accepted registration DTO properties.
 
-* Stack traces
-* Database details
-* Internal implementation details
-* Secrets
+This prevents clients from attempting to control server-managed fields through unexpected request properties.
 
 ---
 
-## Strict Validation
+# 6. Positive Integer Route Parameter Validation
 
-Global validation is configured to prevent unwanted fields from reaching the application.
+The API contains routes that receive database IDs through URL parameters.
 
-Unexpected request properties such as:
+A reusable custom pipe was added:
 
 ```text
-role
-isAdmin
-password_hash
+src/common/pipes/positive-int.pipe.ts
 ```
 
-cannot be used for mass assignment.
+The pipe validates that the parameter:
 
-DTOs explicitly define the fields accepted from clients.
+* contains only digits,
+* represents a positive integer,
+* is a safe JavaScript integer,
+* is greater than zero.
 
----
+### Valid Example
 
-## Route Parameter Validation
+```text
+GET /tasks/1
+```
 
-Route IDs are validated before reaching the database.
-
-For example:
+### Invalid Examples
 
 ```text
 GET /tasks/abc
+GET /tasks/0
+GET /tasks/-1
 ```
 
-returns:
+Invalid values return:
 
 ```text
 400 Bad Request
 ```
 
-instead of allowing an invalid ID to reach the database layer.
+before the request reaches the database query.
+
+The pipe is used for route parameters in:
+
+```text
+src/users/users.controller.ts
+src/projects/projects.controller.ts
+src/tasks/tasks.controller.ts
+src/comments/comments.controller.ts
+```
 
 ---
 
-# OWASP Security Checklist
+# 7. Global Exception Filter
 
-Assignment 3 also documents the application's security posture in:
+A global exception filter was implemented at:
+
+```text
+src/common/filters/http-exception.filter.ts
+```
+
+It is registered globally through:
+
+```ts
+{
+  provide: APP_FILTER,
+  useClass: HttpExceptionFilter,
+}
+```
+
+The filter provides a consistent error response.
+
+Every HTTP error contains exactly these five fields:
+
+```text
+statusCode
+message
+error
+timestamp
+path
+```
+
+### Example 400 Response
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed (positive integer is expected)",
+  "error": "Bad Request",
+  "timestamp": "2026-09-18T00:00:00.000Z",
+  "path": "/tasks/abc"
+}
+```
+
+The exact timestamp varies for every request.
+
+---
+
+# 8. Unexpected 500 Error Handling
+
+Unexpected application errors are handled differently from known HTTP exceptions.
+
+For an unexpected server error, the client receives a generic response:
+
+```json
+{
+  "statusCode": 500,
+  "message": "Internal server error",
+  "error": "Internal Server Error",
+  "timestamp": "2026-09-18T00:00:00.000Z",
+  "path": "/test/security/unexpected-error"
+}
+```
+
+Internal details such as:
+
+* stack traces,
+* database credentials,
+* database error messages,
+* sensitive implementation details
+
+are not returned to the client.
+
+Unexpected errors are logged server-side by the exception filter for debugging purposes.
+
+---
+
+# 9. OWASP Top 10
+
+The file:
 
 ```text
 OWASP.md
 ```
 
-The checklist maps OWASP Top 10 categories to concrete controls implemented in the project or explains why a category is not applicable.
+contains the security checklist for all ten OWASP Top 10 categories.
 
-Examples include:
+The documented controls include:
 
-* Broken Access Control → JWT guards and project-based `RolesGuard`
-* Cryptographic Failures → Argon2 password hashing and hashed refresh tokens
-* Injection → DTO validation and TypeORM
-* Identification and Authentication Failures → JWT authentication and refresh-token rotation
-* Security Misconfiguration → Helmet, restrictive CORS, environment configuration
-* Vulnerable Components → dependency management and security review
-* Logging and Monitoring → controlled error handling
+### A01 — Broken Access Control
 
----
+Mitigations include:
 
-# Security Principles Applied
+* global JWT authentication,
+* explicit public endpoints,
+* role-based authorization,
+* project membership checks,
+* ownership and authorization checks.
 
-The implementation follows several important security principles:
-
-### Passwords are never stored directly
-
-```text
-Plain Password
-      ↓
-    Argon2
-      ↓
-Password Hash
-      ↓
-Database
-```
-
-### Refresh tokens are stored as hashes
-
-```text
-Raw Refresh Token
-      ↓
-      Hash
-      ↓
-Database
-```
-
-### Access tokens are short-lived
-
-Access tokens are intended for frequent API requests and expire relatively quickly.
-
-### Refresh tokens are rotated
-
-Every successful refresh invalidates the previous refresh token.
-
-### Authentication happens before authorization
-
-The security flow is:
-
-```text
-Request
-   ↓
-JWT Authentication
-   ↓
-Authenticated User
-   ↓
-Project Role Lookup
-   ↓
-Authorization
-   ↓
-Controller
-```
-
-### Authorization is project-specific
-
-A user's role on one project does not automatically grant access to another project.
+Implemented through authentication and authorization guards, decorators, controllers, and services.
 
 ---
 
-# Testing
+### A02 — Cryptographic Failures
 
-The project uses Jest for automated testing.
+Mitigations include:
 
-Testing covers:
-
-* Authentication
-* Password verification
-* JWT authentication
-* Refresh-token rotation
-* Refresh-token revocation
-* Logout
-* Role-based authorization
-* Forbidden access
-* Cross-project access restrictions
-* Rate limiting
-* Error response format
-* Validation
+* Argon2 password hashing,
+* configurable Argon2 parameters,
+* JWT-based authentication,
+* hashed refresh tokens,
+* refresh-token expiration,
+* refresh-token revocation.
 
 ---
 
-# Database
+### A03 — Injection
 
-PostgreSQL is used as the primary database with TypeORM as the data-access layer.
+Mitigations include:
 
-Database schema changes are handled through migrations.
+* TypeORM database access,
+* DTO validation,
+* whitelist validation,
+* rejection of unexpected request properties.
 
-TypeORM schema synchronization remains disabled:
+---
 
-```text
-synchronize: false
+### A04 — Insecure Design
+
+Mitigations include:
+
+* separate authentication and authorization guards,
+* access and refresh token separation,
+* refresh token rotation,
+* revoked refresh-token rejection,
+* authentication rate limiting,
+* environment-based security configuration.
+
+---
+
+### A05 — Security Misconfiguration
+
+Mitigations include:
+
+* Helmet,
+* restricted CORS,
+* validated environment variables,
+* disabled TypeORM synchronization,
+* strict request validation,
+* global exception handling.
+
+---
+
+### A06 — Vulnerable and Outdated Components
+
+Dependency security is checked using:
+
+```bash
+npm audit
 ```
 
-No production schema changes are made through automatic synchronization.
+The current audit reports dependency advisories that remain to be addressed.
+
+At the time of Assignment 3 verification:
+
+```text
+5 vulnerabilities
+2 high
+1 moderate
+2 low
+```
+
+The high-severity findings include transitive dependencies involving:
+
+```text
+tmp
+undici
+```
+
+The available automatic fix requires:
+
+```bash
+npm audit fix --force
+```
+
+which would introduce a breaking dependency change.
+
+Therefore, the breaking fix was not applied blindly. The remaining dependency exposure is documented and should be addressed through reviewed and tested dependency updates.
 
 ---
 
-# Week 9 Learning Outcomes
+### A07 — Identification and Authentication Failures
 
-By completing Week 9, the project demonstrates practical understanding of:
+Mitigations include:
 
-* Authentication vs authorization
-* Password hashing
-* JWT authentication
-* Access and refresh tokens
-* Refresh-token rotation
-* Token revocation
-* Session security
-* Project-based RBAC
-* NestJS guards
-* Custom decorators
-* API security
-* Rate limiting
-* CORS
-* Security headers
-* Exception handling
-* Strict validation
-* OWASP security principles
-* Security-focused unit testing
-* Security-focused E2E testing
+* Argon2 password hashing,
+* consistent unauthorized responses for failed login,
+* JWT access tokens,
+* refresh token rotation,
+* refresh token revocation,
+* authentication route throttling.
+
+---
+
+### A08 — Software and Data Integrity Failures
+
+Mitigations include:
+
+* database migrations,
+* `synchronize: false`,
+* persistent refresh-token state,
+* automated authentication and security tests.
+
+---
+
+### A09 — Security Logging and Monitoring Failures
+
+Mitigations include:
+
+* server-side logging of unexpected exceptions,
+* sanitized HTTP error responses,
+* controlled authentication and authorization errors.
+
+Remaining exposure includes the absence of a centralized security-event monitoring and structured audit logging system.
+
+---
+
+### A10 — Server-Side Request Forgery
+
+The current API does not provide a user-controlled server-side URL fetching feature.
+
+There is no endpoint that accepts an arbitrary URL and performs outbound server-side HTTP requests on behalf of a user.
+
+Therefore, SSRF is currently not applicable to the implemented functionality.
+
+---
+
+# 10. Security Testing
+
+Assignment 3 adds:
+
+```text
+test/security.e2e-spec.ts
+```
+
+The security E2E test suite verifies the following:
+
+### Rate Limiting
+
+Repeated rapid login attempts are tested.
+
+Expected behavior:
+
+```text
+First 20 requests → 401
+21st request → 429
+```
+
+This confirms that the authentication route has a stricter rate limit.
+
+---
+
+### Error Shape
+
+The test verifies that invalid route parameters return exactly:
+
+```text
+statusCode
+message
+error
+timestamp
+path
+```
+
+---
+
+### Strict Validation
+
+Unexpected DTO fields such as:
+
+```text
+role
+isAdmin
+```
+
+are rejected with:
+
+```text
+400 Bad Request
+```
+
+---
+
+### Route Parameter Validation
+
+Invalid route parameters such as:
+
+```text
+/tasks/abc
+/tasks/0
+```
+
+are rejected before reaching the service/database layer.
+
+---
+
+### CORS
+
+The tests verify:
+
+```text
+http://localhost:3000
+```
+
+is allowed.
+
+They also verify that an unconfigured origin does not receive the allowed-origin response header.
+
+---
+
+### Helmet
+
+The tests verify security headers including:
+
+```text
+X-Content-Type-Options
+X-Frame-Options
+Strict-Transport-Security
+```
+
+---
+
+### 404 Error Handling
+
+A request to a non-existent route is verified to return:
+
+```text
+404
+```
+
+with the standard five-field error structure.
+
+---
+
+### 500 Error Handling
+
+A deliberate unexpected exception is generated to verify that:
+
+* the response status is 500,
+* the response uses the generic error message,
+* stack traces are not returned,
+* database/password-related internal details are not returned.
+
+---
+
+# 11. Test Results
+
+All final verification checks passed.
+
+## Lint
+
+```bash
+npm run lint
+```
+
+Result:
+
+```text
+Found 0 warnings and 0 errors.
+```
+
+---
+
+## Build
+
+```bash
+npm run build
+```
+
+Result:
+
+```text
+Build passed successfully.
+```
+
+---
+
+## Unit Tests — First Run
+
+```bash
+npm test -- --runInBand
+```
+
+Result:
+
+```text
+Test Suites: 4 passed, 4 total
+Tests:       21 passed, 21 total
+```
+
+---
+
+## Unit Tests — Second Run
+
+```bash
+npm test -- --runInBand
+```
+
+Result:
+
+```text
+Test Suites: 4 passed, 4 total
+Tests:       21 passed, 21 total
+```
+
+The second run produced the same result, confirming consistent test execution.
+
+---
+
+## E2E Tests
+
+```bash
+npm run test:e2e
+```
+
+Result:
+
+```text
+Test Suites: 2 passed, 2 total
+Tests:       43 passed, 43 total
+```
